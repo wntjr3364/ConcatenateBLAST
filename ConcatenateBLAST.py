@@ -1,9 +1,7 @@
 
 import argparse
-import pandas as pd
 
-
-def concatBlast(blastItems):
+def concatBlast(blastItems, seedSize):
     results = {}
     query = blastItems[0]["qseq"]
     for item in blastItems:
@@ -158,76 +156,123 @@ def concatBlast(blastItems):
     return results
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("-i", "--input", dest="input", action="store", required=True)
-parser.add_argument("-o", "--output", dest="output", action="store", required=True)
-parser.add_argument("-c", "--coverage", dest="coverage", action="store", default=0.7, type=float)
-parser.add_argument("-s", "--seed", dest="seed", action="store", default=23,  type=int)
-parser.add_argument("-f", "--format", dest="format", action="store", choices=["result", "link"], default="result", 
-                    help="Specify the output file format.\n result is the concated blast result.\n link is format for showing link information.")
-option = parser.parse_args()
+
+def main():
+    parser = argparse.ArgumentParser(description="Concatenates fragmented BLAST local alignments into continuous query-subject alignments for accurate coverage and similarity calculations.")
+
+    parser.add_argument(
+        "-i", "--input",
+        dest="input",
+        action="store",
+        required=True,
+        help="BLAST output file in tabular format (outfmt 6). The input file must be generated using BLAST with '-outfmt 6' to ensure compatibility."
+    )
+
+    parser.add_argument(
+        "-o", "--output",
+        dest="output",
+        action="store",
+        required=True,
+        help="Output file name where the processed results will be saved."
+    )
+
+    parser.add_argument(
+        "-c", "--coverage",
+        dest="coverage",
+        action="store",
+        default=0.7,
+        type=float,
+        help="Coverage threshold (default: 0.7). Only alignments with a normalized coverage greater than or equal to this threshold will be included. Range: 0 to 1"
+    )
+
+    parser.add_argument(
+        "-s", "--seed",
+        dest="seed",
+        action="store",
+        default=23,
+        type=int,
+        help="Seed size for alignment merging (default: 23). Determines the minimum required overlap to concatenate alignments."
+    )
+
+    parser.add_argument(
+        "-f", "--format",
+        dest="format",
+        action="store",
+        choices=["result", "link"],
+        default="result",
+        help=(
+            "Specify the output format:\n"
+            "  - 'result': Concatenated BLAST results in tab-delimited format (default).\n"
+            "  - 'link': JSON-formatted output for visualization, showing linkage information."
+        )
+    )
+
+    option = parser.parse_args()
+
+    headers = ["qseq", "sseq", "nident", "pident", "positive",
+            "ppos", "mismatch", "gaps", "gapopen", "length",
+            "qlen", "slen", "qstart", "qend", "sstart",
+            "send", "bitscore", "evalue"]
+
+    infile = open(option.input)
+    limitCov = option.coverage
+    seedSize = option.seed
+
+    blastDict = {}
+    queryKeys = {}
+    subjectKeys = {}
+    for line in infile:
+        item = line.strip("\n").split("\t")
+        blastDict.setdefault(item[0], []).append({key: value for key, value in zip(headers, item)})
+        queryKeys[item[0]] = ""
+        subjectKeys[item[1]] = ""
+                    
+    queryKeys = list(sorted(queryKeys.keys()))
+    subjectKeys = list(sorted(subjectKeys.keys()))
 
 
-headers = ["qseq", "sseq", "nident", "pident", "positive",
-           "ppos", "mismatch", "gaps", "gapopen", "length",
-           "qlen", "slen", "qstart", "qend", "sstart",
-           "send", "bitscore", "evalue"]
-
-infile = open(option.input)
-limitCov = option.coverage
-seedSize = option.seed
-
-blastDict = {}
-queryKeys = {}
-subjectKeys = {}
-for line in infile:
-    item = line.strip("\n").split("\t")
-    blastDict.setdefault(item[0], []).append({key: value for key, value in zip(headers, item)})
-    queryKeys[item[0]] = ""
-    subjectKeys[item[1]] = ""
-                
-queryKeys = list(sorted(queryKeys.keys()))
-subjectKeys = list(sorted(subjectKeys.keys()))
-
-
-resultDict = {}
-for query in queryKeys:
-    blastItems = blastDict[query]
-    resultDict[query] = []
-    for subject in subjectKeys:
-        items = list(filter(lambda x:x["sseq"] == subject, blastItems))
-        items = sorted(items, key=lambda x: int(x["nident"]), reverse=True)
-        if len(items) == 0:
-            continue
-        concatResult = concatBlast(items)
-        if concatResult is not None:
-            resultDict[query].append(concatResult)
-        
-
-
-text = []
-if option.format == "result":
-    for query in resultDict:
-
-        items = resultDict[query]
-        for item in items:
-
-            if item["qcov"] < limitCov or item["scov"] < limitCov:
+    resultDict = {}
+    for query in queryKeys:
+        blastItems = blastDict[query]
+        resultDict[query] = []
+        for subject in subjectKeys:
+            items = list(filter(lambda x:x["sseq"] == subject, blastItems))
+            items = sorted(items, key=lambda x: int(x["nident"]), reverse=True)
+            if len(items) == 0:
                 continue
-            result = [item["qseq"], item["sseq"], item["qlen"], item["slen"], item["nident"], item["qstart"],
-                    item["qend"], item["sstart"], item["send"], item["qcov"], item["scov"], item["normCov"], ",".join(sorted(item["qpos"], key=lambda x: int(x.split("-")[1]))), ",".join(sorted(item["spos"], key=lambda x: int(x.split("-")[1]))), ",".join(item["match"])]
-            text.append("\t".join(map(lambda x: str(x), result)))
-elif option.format == "link":
-    for query in resultDict:
-        for item in  resultDict[query]:
-            if item["qcov"] < limitCov or item["scov"] < limitCov:
-                continue
-            for idx in range(len(item["qpos"])):
-                value = list(map(lambda x: str(x), [item["qseq"]] + item["qpos"][idx].split("-") + [item["qcov"]] + [item["sseq"]] + item["spos"][idx].split("-") + [item["scov"], item["match"][idx], item["pmatch"][idx]]))
-                text.append("\t".join(value))
+            concatResult = concatBlast(items, seedSize)
+            if concatResult is not None:
+                resultDict[query].append(concatResult)
+            
 
-outfile = open(option.output, "wt")
-outfile.write("\n".join(text))
-outfile.close()
 
+    text = []
+    if option.format == "result":
+        for query in resultDict:
+
+            items = resultDict[query]
+            for item in items:
+
+                if item["qcov"] < limitCov or item["scov"] < limitCov:
+                    continue
+                result = [item["qseq"], item["sseq"], item["qlen"], item["slen"], item["nident"], item["qstart"],
+                        item["qend"], item["sstart"], item["send"], item["qcov"], item["scov"], item["normCov"], ",".join(sorted(item["qpos"], key=lambda x: int(x.split("-")[1]))), ",".join(sorted(item["spos"], key=lambda x: int(x.split("-")[1]))), ",".join(item["match"])]
+                text.append("\t".join(map(lambda x: str(x), result)))
+    elif option.format == "link":
+        for query in resultDict:
+            for item in  resultDict[query]:
+                if item["qcov"] < limitCov or item["scov"] < limitCov:
+                    continue
+                for idx in range(len(item["qpos"])):
+                    value = list(map(lambda x: str(x), [item["qseq"]] + item["qpos"][idx].split("-") + [item["qcov"]] + [item["sseq"]] + item["spos"][idx].split("-") + [item["scov"], item["match"][idx], item["pmatch"][idx]]))
+                    text.append("\t".join(value))
+
+    outfile = open(option.output, "wt")
+    outfile.write("\n".join(text))
+    outfile.close()
+
+
+
+if __name__ == "__main__":
+    main()
 
