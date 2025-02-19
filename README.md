@@ -5,9 +5,7 @@ A Python tool for concatenating fragmented BLAST local alignments into continuou
 ## Features
 
 - Merges fragmented BLAST alignments based on coverage and seed size
-- Supports both tab-delimited and JSON output formats
 - Calculates normalized coverage between query and subject sequences
-- Handles both forward and reverse strand alignments
 
 ## Installation
 ```bash
